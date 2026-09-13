@@ -25,7 +25,7 @@ def reference_eval(expression: str, variables: dict[str, bool]) -> bool:
     py_expr = re.sub(r'\bOR\b', ' or ', py_expr)
     py_expr = re.sub(r'\bNOT\b', ' not ', py_expr)
 
-    tree = ast.parse(py_expr, mode="eval")
+    tree = ast.parse(py_expr.strip(), mode="eval")
 
     def ev(node):
         if isinstance(node, ast.Expression):
@@ -105,7 +105,11 @@ def evaluate_test_writer(model_name: str, n_cases: int = 12):
         f"Task the code under test must satisfy:\n{boolean_task}\n\n"
         f"Propose {n_cases} diverse test inputs (expression, variables) for this task. "
         f"Use variable names that are valid Python identifiers. Cover AND, OR, NOT, XOR, "
-        f"parentheses, and at least one deeply nested case."
+        f"parentheses, and at least one deeply nested case.\n\n"
+        f"The expression string MUST use only the literal keywords AND, OR, NOT, XOR "
+        f"(uppercase, spelled out) and parentheses. Do NOT use symbolic operators like "
+        f"&&, ||, !, ^, or any other language's syntax — those are invalid here.\n"
+        f"Example of the required style: '(a AND NOT b) OR (c XOR d)'"
     )
     result = writer.run_sync(prompt)
 
@@ -127,8 +131,12 @@ if __name__ == "__main__":
     for r in self_test_oracle():
         print(r)
 
-    print("\n--- llama3.2:latest test-writer run ---")
-    scored, valid, total = evaluate_test_writer("llama3.2:latest")
+    # llama3.2:latest was tried first (different family from the coder/reviewer's
+    # Qwen models) but only got 4/12 valid cases under the oracle, ignoring the
+    # AND/OR/NOT/XOR vocabulary in favor of &&/||/!. granite3.1-dense:8b scored
+    # 12/12 with good operator and nesting coverage — using that instead.
+    print("\n--- granite3.1-dense:8b test-writer run ---")
+    scored, valid, total = evaluate_test_writer("granite3.1-dense:8b")
 
     for expression, variables, expected, error in scored:
         if error is None:
