@@ -45,6 +45,28 @@ class Plan(BaseModel):
                     raise ValueError(f"{t.task_id} depends on unknown task {dep}")
         return subtasks
 
+    @field_validator("subtasks")
+    @classmethod
+    def no_dependency_cycles(cls, subtasks):
+        graph = {t.task_id: t.depends_on for t in subtasks}
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {task_id: WHITE for task_id in graph}
+
+        def visit(task_id, path):
+            color[task_id] = GRAY
+            for dep in graph[task_id]:
+                if color.get(dep) == GRAY:
+                    cycle = " -> ".join(path + [dep])
+                    raise ValueError(f"cyclic depends_on: {cycle}")
+                if color.get(dep) == WHITE:
+                    visit(dep, path + [dep])
+            color[task_id] = BLACK
+
+        for task_id in graph:
+            if color[task_id] == WHITE:
+                visit(task_id, [task_id])
+        return subtasks
+
 
 planner_model = OllamaModel(
     "qwen2.5:7b",

@@ -46,13 +46,29 @@ def test_validators():
     except ValidationError as e:
         results.append(f"FAIL: valid plan rejected: {e}")
 
-    # Known gap: nothing in Plan rejects a dependency cycle.
     try:
         Plan(reason="r", subtasks=[sub("A", depends_on=["B"]),
                                    sub("B", depends_on=["A"])])
-        results.append("KNOWN GAP: cyclic depends_on is accepted by Plan")
-    except ValidationError:
-        results.append("PASS: cycle rejected")
+        results.append("FAIL: 2-cycle depends_on was accepted")
+    except ValidationError as e:
+        ok = "cyclic depends_on" in str(e)
+        results.append(f"{'PASS' if ok else 'FAIL'}: 2-cycle rejected")
+
+    try:
+        Plan(reason="r", subtasks=[sub("A", depends_on=["C"]),
+                                   sub("B", depends_on=["A"]),
+                                   sub("C", depends_on=["B"])])
+        results.append("FAIL: 3-cycle depends_on was accepted")
+    except ValidationError as e:
+        ok = "cyclic depends_on" in str(e)
+        results.append(f"{'PASS' if ok else 'FAIL'}: 3-cycle rejected")
+
+    try:
+        Plan(reason="r", subtasks=[sub("A", depends_on=["A"])])
+        results.append("FAIL: self-loop depends_on was accepted")
+    except ValidationError as e:
+        ok = "cyclic depends_on" in str(e)
+        results.append(f"{'PASS' if ok else 'FAIL'}: self-loop rejected")
 
     return results
 
