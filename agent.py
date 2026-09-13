@@ -29,7 +29,7 @@ class ReviewResult(BaseModel):
     approved: bool = Field(description="Whether the code looks correct")
 
 coder_model = OllamaModel(
-    "qwen2.5-coder:7b",
+    "deepseek-coder:6.7b",
     provider=OllamaProvider(base_url="http://localhost:11434/v1")
 )
 
