@@ -15,7 +15,10 @@ class Parameter(BaseModel):
 class SubTask(BaseModel):
     task_id: str
     description: str
-    depends_on: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(
+        description="task_id values of subtasks this one consumes output from. "
+                    "Empty only if this subtask reads solely from the original task input."
+    )
     input_params: list[Parameter]
     output_params: list[Parameter]
 
