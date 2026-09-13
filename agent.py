@@ -212,6 +212,34 @@ def combined_code(task_id: str, solutions: dict[str, CodeSolution], by_id: dict[
     return "\n\n".join(solutions[tid].code for tid in order)
 
 
+def check_full_solution(code: str, entry_function: str) -> list[str]:
+    '''holistic pass over the fully assembled solution: each subtask is checked in
+    isolation as it's built, but bugs at the seams between subtasks (mismatched
+    calls, wrong argument order, name collisions) only show up once everything
+    is combined. Returns a list of problems found; empty means it looks sound.'''
+    problems = []
+
+    err = syntax_error(code)
+    if err is not None:
+        problems.append(f"Syntax error in combined solution: {err}")
+        return problems
+
+    review = reviewer.run_sync(
+        f"This is a complete solution assembled from several separately-written "
+        f"functions, meant to be called through its entry point `{entry_function}`. "
+        f"Review it as one piece — the individual functions may each look fine on "
+        f"their own, so focus specifically on the seams between them: does every "
+        f"function call match the actual signature (name, argument count, order, "
+        f"types) of the function it's calling? Are outputs from one function "
+        f"consumed correctly by the next? Do not use eval(), exec(), or "
+        f"third-party libraries.\n\n{code}"
+    )
+    if not review.output.approved:
+        problems.append(f"Integration review flagged issues: {review.output.feedback}")
+
+    return problems
+
+
 if __name__ == "__main__":
     plan = run_planner(task)
     if plan is None:
@@ -254,8 +282,17 @@ if __name__ == "__main__":
             print(f"=== Skipping tests for terminal subtask '{tid}': not implemented ===")
             continue
 
-        print(f"=== Testing terminal subtask '{tid}' (`{solution.function_name}`) ===")
+        print(f"=== Checking assembled solution for '{tid}' (`{solution.function_name}`) ===")
         code = combined_code(tid, solutions, by_id)
+
+        problems = check_full_solution(code, solution.function_name)
+        if problems:
+            for p in problems:
+                print(f"  ISSUE: {p}")
+        else:
+            print("  No integration issues found")
+
+        print(f"=== Testing terminal subtask '{tid}' (`{solution.function_name}`) ===")
         passed, details = run_tests(code, solution.function_name, test_cases)
         for d in details:
             print(d)

@@ -80,8 +80,12 @@ planner = Agent(
         "You are a task planning assistant. Decompose the given coding task "
         "into subtasks, each with a clear input/output interface. Ensure "
         "dependent subtasks' input_params match the output_params of the "
-        "subtasks they depend on. Explain your decomposition reasoning "
-        "before listing subtasks."
+        "subtasks they depend on. The final subtask in the plan must accept "
+        "exactly the input parameters given in the original task's function "
+        "signature (same names and types) and depend on whichever subtasks "
+        "it needs to produce the task's final output — it is the single "
+        "entry point that composes the rest. Explain your decomposition "
+        "reasoning before listing subtasks."
     ),
 )
 
