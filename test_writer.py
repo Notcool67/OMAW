@@ -13,8 +13,6 @@ from pydantic_ai.models.ollama import OllamaModel
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.providers.ollama import OllamaProvider
 
-from agent import task as boolean_task
-
 
 def reference_eval(expression: str, variables: dict[str, bool]) -> bool:
     '''ground truth for the boolean-expression task, built on ast (parsing only,
@@ -58,11 +56,9 @@ def reference_eval(expression: str, variables: dict[str, bool]) -> bool:
     return ev(tree)
 
 
-def self_test_oracle():
-    '''sanity-check the oracle itself against the hand-written test_cases before
-    trusting it to judge anything the model produces.'''
-    from agent import test_cases
-
+def self_test_oracle(test_cases):
+    '''sanity-check the oracle itself against a set of known-correct test_cases
+    before trusting it to judge anything the model produces.'''
     results = []
     for expression, variables, expected in test_cases:
         try:
@@ -99,10 +95,10 @@ def make_test_writer(model_name: str) -> Agent:
     )
 
 
-def evaluate_test_writer(model_name: str, n_cases: int = 12):
+def evaluate_test_writer(task_prompt: str, model_name: str, n_cases: int = 12):
     writer = make_test_writer(model_name)
     prompt = (
-        f"Task the code under test must satisfy:\n{boolean_task}\n\n"
+        f"Task the code under test must satisfy:\n{task_prompt}\n\n"
         f"Propose {n_cases} diverse test inputs (expression, variables) for this task. "
         f"Use variable names that are valid Python identifiers. Cover AND, OR, NOT, XOR, "
         f"parentheses, and at least one deeply nested case.\n\n"
@@ -127,8 +123,10 @@ def evaluate_test_writer(model_name: str, n_cases: int = 12):
 
 
 if __name__ == "__main__":
+    from agent import task, test_cases
+
     print("--- oracle self-test against agent.py's hand-written test_cases ---")
-    for r in self_test_oracle():
+    for r in self_test_oracle(test_cases):
         print(r)
 
     # llama3.2:latest was tried first (different family from the coder/reviewer's
@@ -136,7 +134,7 @@ if __name__ == "__main__":
     # AND/OR/NOT/XOR vocabulary in favor of &&/||/!. granite3.1-dense:8b scored
     # 12/12 with good operator and nesting coverage — using that instead.
     print("\n--- granite3.1-dense:8b test-writer run ---")
-    scored, valid, total = evaluate_test_writer("granite3.1-dense:8b")
+    scored, valid, total = evaluate_test_writer(task, "granite3.1-dense:8b")
 
     for expression, variables, expected, error in scored:
         if error is None:
