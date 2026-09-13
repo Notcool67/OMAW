@@ -100,7 +100,7 @@ def topo_order(subtasks: list[SubTask]) -> list[SubTask]:
     return order
 
 
-def subtask_prompt(subtask: SubTask, solutions: dict[str, CodeSolution]) -> str:
+def subtask_prompt(task_prompt: str, subtask: SubTask, solutions: dict[str, CodeSolution]) -> str:
     ins = ", ".join(f"{p.name}: {p.type}" for p in subtask.input_params) or "none"
     outs = ", ".join(f"{p.name}: {p.type}" for p in subtask.output_params) or "none"
 
@@ -121,6 +121,8 @@ def subtask_prompt(subtask: SubTask, solutions: dict[str, CodeSolution]) -> str:
             )
 
     return (
+        f"Overall goal this subtask is part of (for vocabulary/format context only — "
+        f"implement just the subtask below, do not solve the whole thing here):\n{task_prompt}\n\n"
         f"Implement this subtask as a single Python function.\n"
         f"Task: {subtask.description}\n"
         f"Inputs: {ins}\n"
@@ -138,8 +140,8 @@ def has_function_def(code: str, function_name: str) -> bool:
     return re.search(rf'^\s*def\s+{re.escape(function_name)}\s*\(', code, re.MULTILINE) is not None
 
 
-def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> CodeSolution | None:
-    coder_result = coder.run_sync(subtask_prompt(subtask, solutions))
+def implement_subtask(task_prompt: str, subtask: SubTask, solutions: dict[str, CodeSolution]) -> CodeSolution | None:
+    coder_result = coder.run_sync(subtask_prompt(task_prompt, subtask, solutions))
 
     for i in range(MAX_ATTEMPTS):
         print(f"  ---Attempt {i+1}---")
@@ -149,7 +151,7 @@ def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> C
             coder_result = coder.run_sync(
                 f"Your last response did not contain a complete function body. Write the full, "
                 f"runnable Python function `{coder_result.output.function_name}` implementing: "
-                f"{subtask.description}"
+                f"{subtask.description}\n\nOverall goal (for vocabulary/format context only): {task_prompt}"
             )
             continue
 
@@ -165,7 +167,8 @@ def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> C
         coder_result = coder.run_sync(
             f"Rewrite this code: {coder_result.output.code}\n\n"
             f"with the following criticism in mind: {reviewer_result.output.feedback},\n\n"
-            f"while following the original task: {subtask.description}"
+            f"while following the original task: {subtask.description}\n\n"
+            f"Overall goal this subtask is part of (for vocabulary/format context only): {task_prompt}"
         )
 
     print(f"  Failed review after {MAX_ATTEMPTS} attempts")
@@ -209,7 +212,7 @@ if __name__ == "__main__":
             print(f"  Skipped: unimplemented dependencies {missing_deps}")
             continue
 
-        solution = implement_subtask(subtask, solutions)
+        solution = implement_subtask(task, subtask, solutions)
         if solution is None:
             print(f"  {subtask.task_id} not implemented, dependents may be skipped")
             continue
