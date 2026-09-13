@@ -140,6 +140,15 @@ def has_function_def(code: str, function_name: str) -> bool:
     return re.search(rf'^\s*def\s+{re.escape(function_name)}\s*\(', code, re.MULTILINE) is not None
 
 
+def syntax_error(code: str) -> str | None:
+    '''deterministic sanity check: does the code actually parse as Python?'''
+    try:
+        compile(code, "<subtask>", "exec")
+        return None
+    except SyntaxError as e:
+        return str(e)
+
+
 def implement_subtask(task_prompt: str, subtask: SubTask, solutions: dict[str, CodeSolution]) -> CodeSolution | None:
     coder_result = coder.run_sync(subtask_prompt(task_prompt, subtask, solutions))
 
@@ -152,6 +161,17 @@ def implement_subtask(task_prompt: str, subtask: SubTask, solutions: dict[str, C
                 f"Your last response did not contain a complete function body. Write the full, "
                 f"runnable Python function `{coder_result.output.function_name}` implementing: "
                 f"{subtask.description}\n\nOverall goal (for vocabulary/format context only): {task_prompt}"
+            )
+            continue
+
+        err = syntax_error(coder_result.output.code)
+        if err is not None:
+            print(f"  Code does not parse as Python ({err}) — rejecting without review")
+            coder_result = coder.run_sync(
+                f"Your last response had a Python syntax error: {err}\n\n"
+                f"Rewrite `{coder_result.output.function_name}` as complete, syntactically valid "
+                f"Python implementing: {subtask.description}\n\n"
+                f"Overall goal (for vocabulary/format context only): {task_prompt}"
             )
             continue
 
