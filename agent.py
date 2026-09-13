@@ -9,15 +9,15 @@ from pydantic_ai.providers.ollama import OllamaProvider
 from planner import run_planner, SubTask
 import test_writer
 
-#hard coded test caases for the current prompt. if successfull will move forward with generalization
+# test_cases: list of (args_tuple, expected) — fn(*args) is compared against expected
 test_cases = [
-    ("a", {"a": True}, True),
-    ("NOT a", {"a": True}, False),
-    ("a AND b", {"a": True, "b": False}, False),
-    ("a OR b", {"a": False, "b": True}, True),
-    ("a XOR b", {"a": True, "b": True}, False),
-    ("(a OR b) AND c", {"a": True, "b": False, "c": False}, False),
-    ("a OR b AND c", {"a": True, "b": False, "c": False}, True),
+    (("a", {"a": True}), True),
+    (("NOT a", {"a": True}), False),
+    (("a AND b", {"a": True, "b": False}), False),
+    (("a OR b", {"a": False, "b": True}), True),
+    (("a XOR b", {"a": True, "b": True}), False),
+    (("(a OR b) AND c", {"a": True, "b": False, "c": False}), False),
+    (("a OR b AND c", {"a": True, "b": False, "c": False}), True),
 ]
 
 class CodeSolution(BaseModel):
@@ -56,22 +56,23 @@ def code_executor(code: str, function_name: str):
     return namespace[function_name]
 
 def run_tests(code: str, function_name: str, test_cases):
+    '''test_cases: list of (args_tuple, expected) — fn(*args) is compared against expected'''
     fn = code_executor(code,function_name)
     if fn is None:
         return False, ["Code failed to execute or function name not found"]
 
     results = []
     all_passed = True
-    for expressions, variables, expected in test_cases:
+    for args, expected in test_cases:
         try:
-            actual = fn(expressions,variables)
+            actual = fn(*args)
             if actual == expected:
-                results.append(f"PASS: {expressions!r} -> {actual}")
+                results.append(f"PASS: {args!r} -> {actual}")
             else:
-                results.append(f"FAIL: {expressions!r} -> expected {expected}, got {actual}")
+                results.append(f"FAIL: {args!r} -> expected {expected}, got {actual}")
                 all_passed = False
         except Exception as e:
-            results.append(f"FAIL: {expressions!r} raised {type(e).__name__}: {e}")
+            results.append(f"FAIL: {args!r} raised {type(e).__name__}: {e}")
             all_passed = False
 
     return all_passed, results
@@ -117,7 +118,8 @@ def subtask_prompt(task_prompt: str, subtask: SubTask, solutions: dict[str, Code
         if pieces:
             context = (
                 "\n\nThe following functions are already implemented and will be "
-                "available in scope — call them directly, do not redefine them:\n\n"
+                "available in scope — call them directly, do not redefine them. "
+                "Match their exact token/data formats and operator vocabulary:\n\n"
                 + "\n\n".join(pieces)
             )
 
@@ -228,12 +230,12 @@ def build_test_suite(task_prompt: str, hand_written: list, extra_n: int = 12) ->
         print(f"  Test-case generation failed ({type(e).__name__}: {e}) — using hand-written cases only")
         return suite
 
-    seen_expressions = {expr for expr, _, _ in hand_written}
+    seen_expressions = {args[0] for args, _ in hand_written}
     added = 0
     for expression, variables, expected, error in scored:
         if error is not None or expression in seen_expressions:
             continue
-        suite.append((expression, variables, expected))
+        suite.append(((expression, variables), expected))
         seen_expressions.add(expression)
         added += 1
 
@@ -269,10 +271,25 @@ def check_full_solution(code: str, entry_function: str) -> list[str]:
     return problems
 
 
-if __name__ == "__main__":
-    plan = run_planner(task)
+def run_pipeline(task_prompt: str, hand_written_test_cases: list, use_test_writer: bool = True) -> dict:
+    '''drives the full planner -> implement -> assemble -> test pipeline for an
+    arbitrary task_prompt/test_cases pair. Returns a stats dict for scoring/
+    reporting; also prints progress as it goes, same as before.'''
+    stats = {
+        "planner_ok": False,
+        "subtasks_total": 0,
+        "subtasks_implemented": 0,
+        "terminal_ids": [],
+        "terminal_implemented": [],
+        "terminal_results": {},  # tid -> {"passed": bool, "cases_passed": int, "cases_total": int, "integration_issues": [str]}
+    }
+
+    plan = run_planner(task_prompt)
     if plan is None:
-        raise SystemExit("Planner failed to produce a plan")
+        print("Planner failed to produce a plan")
+        return stats
+    stats["planner_ok"] = True
+    stats["subtasks_total"] = len(plan.subtasks)
 
     print(plan.reason)
     print()
@@ -289,12 +306,13 @@ if __name__ == "__main__":
             print(f"  Skipped: unimplemented dependencies {missing_deps}")
             continue
 
-        solution = implement_subtask(task, subtask, solutions)
+        solution = implement_subtask(task_prompt, subtask, solutions)
         if solution is None:
             print(f"  {subtask.task_id} not implemented, dependents may be skipped")
             continue
 
         solutions[subtask.task_id] = solution
+        stats["subtasks_implemented"] += 1
         print(f"  Implemented as `{solution.function_name}`")
         print(solution.code)
         print()
@@ -304,11 +322,12 @@ if __name__ == "__main__":
         for dep in t.depends_on:
             dependents_of[dep] = True
     terminal_ids = [tid for tid, has_dep in dependents_of.items() if not has_dep]
+    stats["terminal_ids"] = terminal_ids
 
-    full_test_cases = test_cases
-    if any(tid in solutions for tid in terminal_ids):
+    full_test_cases = hand_written_test_cases
+    if use_test_writer and any(tid in solutions for tid in terminal_ids):
         print("=== Generating supplementary test cases ===")
-        full_test_cases = build_test_suite(task, test_cases)
+        full_test_cases = build_test_suite(task_prompt, hand_written_test_cases)
         print()
 
     for tid in terminal_ids:
@@ -316,6 +335,7 @@ if __name__ == "__main__":
         if solution is None:
             print(f"=== Skipping tests for terminal subtask '{tid}': not implemented ===")
             continue
+        stats["terminal_implemented"].append(tid)
 
         print(f"=== Checking assembled solution for '{tid}' (`{solution.function_name}`) ===")
         code = combined_code(tid, solutions, by_id)
@@ -332,3 +352,17 @@ if __name__ == "__main__":
         for d in details:
             print(d)
         print(f"Test passed: {passed}\n")
+
+        cases_passed = sum(1 for d in details if d.startswith("PASS"))
+        stats["terminal_results"][tid] = {
+            "passed": passed,
+            "cases_passed": cases_passed,
+            "cases_total": len(details),
+            "integration_issues": problems,
+        }
+
+    return stats
+
+
+if __name__ == "__main__":
+    run_pipeline(task, test_cases)
