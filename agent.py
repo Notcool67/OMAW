@@ -7,6 +7,7 @@ from pydantic_ai.output import NativeOutput
 from pydantic_ai.providers.ollama import OllamaProvider
 
 from planner import run_planner, SubTask
+import test_writer
 
 #hard coded test caases for the current prompt. if successfull will move forward with generalization
 test_cases = [
@@ -212,6 +213,34 @@ def combined_code(task_id: str, solutions: dict[str, CodeSolution], by_id: dict[
     return "\n\n".join(solutions[tid].code for tid in order)
 
 
+def build_test_suite(task_prompt: str, hand_written: list, extra_n: int = 12) -> list:
+    '''hand-written test_cases are the trusted baseline; on top of that, ask an LLM
+    for more inputs and score them with test_writer's deterministic oracle so
+    correctness never depends on the same model grading its own homework. Falls
+    back to the hand-written set alone if generation fails for any reason.'''
+    suite = list(hand_written)
+
+    try:
+        scored, valid, total = test_writer.evaluate_test_writer(
+            task_prompt, "granite3.1-dense:8b", n_cases=extra_n
+        )
+    except Exception as e:
+        print(f"  Test-case generation failed ({type(e).__name__}: {e}) — using hand-written cases only")
+        return suite
+
+    seen_expressions = {expr for expr, _, _ in hand_written}
+    added = 0
+    for expression, variables, expected, error in scored:
+        if error is not None or expression in seen_expressions:
+            continue
+        suite.append((expression, variables, expected))
+        seen_expressions.add(expression)
+        added += 1
+
+    print(f"  Generated {total} candidate test cases, {valid} valid, {added} new (after dedup)")
+    return suite
+
+
 def check_full_solution(code: str, entry_function: str) -> list[str]:
     '''holistic pass over the fully assembled solution: each subtask is checked in
     isolation as it's built, but bugs at the seams between subtasks (mismatched
@@ -276,6 +305,12 @@ if __name__ == "__main__":
             dependents_of[dep] = True
     terminal_ids = [tid for tid, has_dep in dependents_of.items() if not has_dep]
 
+    full_test_cases = test_cases
+    if any(tid in solutions for tid in terminal_ids):
+        print("=== Generating supplementary test cases ===")
+        full_test_cases = build_test_suite(task, test_cases)
+        print()
+
     for tid in terminal_ids:
         solution = solutions.get(tid)
         if solution is None:
@@ -293,7 +328,7 @@ if __name__ == "__main__":
             print("  No integration issues found")
 
         print(f"=== Testing terminal subtask '{tid}' (`{solution.function_name}`) ===")
-        passed, details = run_tests(code, solution.function_name, test_cases)
+        passed, details = run_tests(code, solution.function_name, full_test_cases)
         for d in details:
             print(d)
         print(f"Test passed: {passed}\n")
