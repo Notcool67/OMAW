@@ -128,10 +128,13 @@ def subtask_prompt(subtask: SubTask, solutions: dict[str, CodeSolution]) -> str:
     )
 
 
+MAX_ATTEMPTS = 6
+
+
 def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> CodeSolution | None:
     coder_result = coder.run_sync(subtask_prompt(subtask, solutions))
 
-    for i in range(3):
+    for i in range(MAX_ATTEMPTS):
         print(f"  ---Attempt {i+1}---")
         reviewer_result = reviewer.run_sync(
             f"Review this code:\n\n{coder_result.output.code}\n\nExplanation: {coder_result.output.explanation}"
@@ -148,7 +151,7 @@ def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> C
             f"while following the original task: {subtask.description}"
         )
 
-    print(f"  Failed review after 3 attempts")
+    print(f"  Failed review after {MAX_ATTEMPTS} attempts")
     return None
 
 
