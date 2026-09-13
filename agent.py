@@ -1,10 +1,10 @@
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.models.ollama import OllamaModel
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.providers.ollama import OllamaProvider
-from dataclasses import dataclass
-from pathlib import Path
+
+from planner import run_planner, SubTask
 
 #hard coded test caases for the current prompt. if successfull will move forward with generalization
 test_cases = [
@@ -78,30 +78,142 @@ coder = Agent(coder_model, output_type=NativeOutput(CodeSolution), system_prompt
 reviewer = Agent(reviewer_model, output_type=NativeOutput(ReviewResult),system_prompt="You are a code reviewer. Check the given code for correctness and bugs. First write out your feedback describing any issues you find, then decide whether to approve based on that feedback.")
 task = "Write a function `eval_bool_expression(expression: str, variables: dict[str, bool]) -> bool` that evaluates a boolean expression containing `AND`, `OR`, `NOT`, `XOR`, parentheses `()`, and variables. Do NOT use eval(), exec(), or third-party libraries. Implement a proper tokenizer and parser (e.g., Shunting-yard or recursive descent)."
 
-coder_result = coder.run_sync(task)
 
-for i in range(3):
+def topo_order(subtasks: list[SubTask]) -> list[SubTask]:
+    '''orders subtasks so every dependency comes before its dependents'''
+    by_id = {t.task_id: t for t in subtasks}
+    visited = set()
+    order = []
 
-    print(f"---Attempt {i+1}--- ")
-    reviewer_result = reviewer.run_sync(f"Review this code:\n\n{coder_result.output.code}\n\nExplanation: {coder_result.output.explanation}")
-    print(f"Reviewer Approved: {reviewer_result.output.approved}")
-    print(f"Feedaback: {reviewer_result.output.feedback}")
+    def visit(t):
+        if t.task_id in visited:
+            return
+        visited.add(t.task_id)
+        for dep in t.depends_on:
+            visit(by_id[dep])
+        order.append(t)
 
-    if reviewer_result.output.approved == True:
-        passed, details = run_tests(coder_result.output.code, coder_result.output.function_name, test_cases)
-        print(f"Test passed: {passed}")
+    for t in subtasks:
+        visit(t)
+    return order
+
+
+def subtask_prompt(subtask: SubTask, solutions: dict[str, CodeSolution]) -> str:
+    ins = ", ".join(f"{p.name}: {p.type}" for p in subtask.input_params) or "none"
+    outs = ", ".join(f"{p.name}: {p.type}" for p in subtask.output_params) or "none"
+
+    context = ""
+    if subtask.depends_on:
+        pieces = []
+        for dep in subtask.depends_on:
+            dep_solution = solutions.get(dep)
+            if dep_solution is not None:
+                pieces.append(
+                    f"# `{dep_solution.function_name}` (subtask '{dep}'):\n{dep_solution.code}"
+                )
+        if pieces:
+            context = (
+                "\n\nThe following functions are already implemented and will be "
+                "available in scope — call them directly, do not redefine them:\n\n"
+                + "\n\n".join(pieces)
+            )
+
+    return (
+        f"Implement this subtask as a single Python function.\n"
+        f"Task: {subtask.description}\n"
+        f"Inputs: {ins}\n"
+        f"Outputs: {outs}\n"
+        f"Do NOT use eval(), exec(), or third-party libraries."
+        f"{context}"
+    )
+
+
+def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> CodeSolution | None:
+    coder_result = coder.run_sync(subtask_prompt(subtask, solutions))
+
+    for i in range(3):
+        print(f"  ---Attempt {i+1}---")
+        reviewer_result = reviewer.run_sync(
+            f"Review this code:\n\n{coder_result.output.code}\n\nExplanation: {coder_result.output.explanation}"
+        )
+        print(f"  Reviewer approved: {reviewer_result.output.approved}")
+        print(f"  Feedback: {reviewer_result.output.feedback}")
+
+        if reviewer_result.output.approved:
+            return coder_result.output
+
+        coder_result = coder.run_sync(
+            f"Rewrite this code: {coder_result.output.code}\n\n"
+            f"with the following criticism in mind: {reviewer_result.output.feedback},\n\n"
+            f"while following the original task: {subtask.description}"
+        )
+
+    print(f"  Failed review after 3 attempts")
+    return None
+
+
+def combined_code(task_id: str, solutions: dict[str, CodeSolution], by_id: dict[str, SubTask]) -> str:
+    '''concatenates a subtask's code with all its transitive dependencies, in dependency order'''
+    order = []
+    seen = set()
+
+    def visit(tid):
+        if tid in seen or tid not in solutions:
+            return
+        seen.add(tid)
+        for dep in by_id[tid].depends_on:
+            visit(dep)
+        order.append(tid)
+
+    visit(task_id)
+    return "\n\n".join(solutions[tid].code for tid in order)
+
+
+if __name__ == "__main__":
+    plan = run_planner(task)
+    if plan is None:
+        raise SystemExit("Planner failed to produce a plan")
+
+    print(plan.reason)
+    print()
+
+    by_id = {t.task_id: t for t in plan.subtasks}
+    ordered = topo_order(plan.subtasks)
+    solutions: dict[str, CodeSolution] = {}
+
+    for subtask in ordered:
+        print(f"=== {subtask.task_id}: {subtask.description} ===")
+
+        missing_deps = [d for d in subtask.depends_on if d not in solutions]
+        if missing_deps:
+            print(f"  Skipped: unimplemented dependencies {missing_deps}")
+            continue
+
+        solution = implement_subtask(subtask, solutions)
+        if solution is None:
+            print(f"  {subtask.task_id} not implemented, dependents may be skipped")
+            continue
+
+        solutions[subtask.task_id] = solution
+        print(f"  Implemented as `{solution.function_name}`")
+        print(solution.code)
+        print()
+
+    dependents_of = {t.task_id: False for t in plan.subtasks}
+    for t in plan.subtasks:
+        for dep in t.depends_on:
+            dependents_of[dep] = True
+    terminal_ids = [tid for tid, has_dep in dependents_of.items() if not has_dep]
+
+    for tid in terminal_ids:
+        solution = solutions.get(tid)
+        if solution is None:
+            print(f"=== Skipping tests for terminal subtask '{tid}': not implemented ===")
+            continue
+
+        print(f"=== Testing terminal subtask '{tid}' (`{solution.function_name}`) ===")
+        code = combined_code(tid, solutions, by_id)
+        passed, details = run_tests(code, solution.function_name, test_cases)
         for d in details:
             print(d)
-
-        if passed == True:
-            print("Code approved and passed\n",coder_result.output.code)
-            break
-
-        else:
-            coder_result = coder.run_sync(f"Given the prompt '{task}', rewrite this code: {coder_result.output.code}, with the following details in mind {details}")
-
-    else:
-        coder_result = coder.run_sync(f"Rewrite this code: {coder_result.output.code} \n\nwtih the following criticism in mind: {reviewer_result.output.feedback},\n\n while following the original task: {task}")
-
-else:
-    print("Failed after 3 attempts")
+        print(f"Test passed: {passed}\n")
