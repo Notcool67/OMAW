@@ -1,3 +1,5 @@
+import re
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.ollama import OllamaModel
@@ -131,11 +133,26 @@ def subtask_prompt(subtask: SubTask, solutions: dict[str, CodeSolution]) -> str:
 MAX_ATTEMPTS = 6
 
 
+def has_function_def(code: str, function_name: str) -> bool:
+    '''deterministic sanity check: does the code actually define this function?'''
+    return re.search(rf'^\s*def\s+{re.escape(function_name)}\s*\(', code, re.MULTILINE) is not None
+
+
 def implement_subtask(subtask: SubTask, solutions: dict[str, CodeSolution]) -> CodeSolution | None:
     coder_result = coder.run_sync(subtask_prompt(subtask, solutions))
 
     for i in range(MAX_ATTEMPTS):
         print(f"  ---Attempt {i+1}---")
+
+        if not has_function_def(coder_result.output.code, coder_result.output.function_name):
+            print(f"  No `def {coder_result.output.function_name}` found in code — rejecting without review")
+            coder_result = coder.run_sync(
+                f"Your last response did not contain a complete function body. Write the full, "
+                f"runnable Python function `{coder_result.output.function_name}` implementing: "
+                f"{subtask.description}"
+            )
+            continue
+
         reviewer_result = reviewer.run_sync(
             f"Review this code:\n\n{coder_result.output.code}\n\nExplanation: {coder_result.output.explanation}"
         )
