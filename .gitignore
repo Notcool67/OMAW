@@ -4,3 +4,4 @@ __pycache__/
 
 # run output, but keep the benchmark data files bench_eval.py reads
 .run_logs/*.log
+.vscode/
