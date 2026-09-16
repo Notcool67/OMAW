@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+
+# run output, but keep the benchmark data files bench_eval.py reads
+.run_logs/*.log
