@@ -7,7 +7,7 @@ with ast so nothing gets executed.
 files came from:
   https://github.com/openai/human-eval/blob/master/data/HumanEval.jsonl.gz
   https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json
-copies are saved in .run_logs/
+copies are saved in data/
 """
 
 import ast
@@ -16,7 +16,7 @@ import os
 
 from agent import run_pipeline
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), ".run_logs")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
 def parse_asserts_from_source(src: str) -> list:
