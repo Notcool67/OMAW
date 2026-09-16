@@ -15,9 +15,11 @@ class Parameter(BaseModel):
 class SubTask(BaseModel):
     task_id: str
     description: str
+    # no default on purpose. when this had default_factory=list the model just never
+    # filled it in and every subtask came back with depends_on empty
     depends_on: list[str] = Field(
-        description="task_id values of subtasks this one consumes output from. "
-                    "Empty only if this subtask reads solely from the original task input."
+        description="task_id values of subtasks this one takes output from. "
+                    "Only leave it empty if this subtask just uses the original task input."
     )
     input_params: list[Parameter]
     output_params: list[Parameter]
@@ -48,6 +50,8 @@ class Plan(BaseModel):
     @field_validator("subtasks")
     @classmethod
     def no_dependency_cycles(cls, subtasks):
+        # normal dfs cycle check. gray means the node is still on the path we are
+        # walking right now, so hitting a gray one again means we went in a circle
         graph = {t.task_id: t.depends_on for t in subtasks}
         WHITE, GRAY, BLACK = 0, 1, 2
         color = {task_id: WHITE for task_id in graph}

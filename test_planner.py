@@ -1,5 +1,5 @@
-"""Tests for planner.py: the schema validators, and whether the plan the model
-actually produces wires input_params to upstream output_params."""
+"""tests for planner.py. checks the validators do what they should, and that the
+plan the model gives back actually joins the inputs and outputs up properly"""
 
 from pydantic import ValidationError
 
@@ -20,7 +20,7 @@ def sub(task_id, depends_on=(), inputs=(), outputs=()):
     )
 
 
-# --- offline validator tests (no model call) ---------------------------------
+# --- validator tests, these dont call the model so theyre quick ---
 
 def test_validators():
     results = []
@@ -73,16 +73,16 @@ def test_validators():
     return results
 
 
-# --- param wiring check ------------------------------------------------------
+# --- checking the plan actually wires up ---
 
 def check_param_wiring(plan):
-    """Every input_param of a subtask should come from either a subtask it
-    depends on, or the original task input. Returns (ok, list of findings)."""
+    """every input a subtask asks for should come from either a subtask it depends
+    on or from the original task. returns (ok, list of findings)"""
     by_id = {t.task_id: t for t in plan.subtasks}
     findings = []
     ok = True
 
-    # name -> task_ids that produce it, across the whole plan
+    # param name -> which task_ids make it, looking at the whole plan
     producers = {}
     for t in plan.subtasks:
         for out in t.output_params:
@@ -94,7 +94,7 @@ def check_param_wiring(plan):
     }
 
     for t in plan.subtasks:
-        # what its declared dependencies actually hand it
+        # what the deps it declared actually give it
         available = {}
         for dep in t.depends_on:
             for out in by_id[dep].output_params:
@@ -117,20 +117,20 @@ def check_param_wiring(plan):
             else:
                 upstream = [pid for pid in producers.get(inp.name, []) if pid != t.task_id]
                 if upstream:
-                    # somebody in the plan makes it, but the edge was never declared
+                    # something in the plan does make it, they just forgot to say so
                     ok = False
                     findings.append(
                         f"MISSING DEP: {t.task_id} wants {inp.name}:{inp.type}, produced by "
                         f"'{upstream[0]}', but depends_on={t.depends_on or '[]'}"
                     )
                 else:
-                    # no subtask produces it, so it comes from the original task
+                    # nothing makes it so it must be coming from the task itself
                     findings.append(
                         f"TASK INPUT: {t.task_id}.{inp.name}:{inp.type} (from the task itself)"
                     )
 
-        # a declared edge that hands over nothing is either a stray dep or a
-        # param the model forgot to thread through
+        # if you depend on something but dont use anything it gives you then either
+        # the dep shouldnt be there or a param got missed somewhere
         for dep in t.depends_on:
             if dep not in used_deps:
                 ok = False
@@ -147,7 +147,7 @@ def check_param_wiring(plan):
             ok = False
             findings.append(f"NO INPUT: {t.task_id} declares no input_params")
 
-    # an output nobody reads is only fine on a terminal subtask
+    # an output nothing reads is only ok on the last subtask
     consumed = {i.name for t in plan.subtasks for i in t.input_params}
     for t in plan.subtasks:
         if not has_dependents[t.task_id]:
@@ -164,7 +164,8 @@ def check_param_wiring(plan):
 
 
 def test_wiring_checker():
-    """Self-tests for check_param_wiring on hand-built plans."""
+    """tests for the checker itself. i make up plans where i already know whats
+    wrong with them and see if it catches it"""
     results = []
 
     def case(label, plan, want_ok, want_substr=None):

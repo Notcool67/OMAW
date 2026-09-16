@@ -1,15 +1,13 @@
-"""Runs the planner+agent pipeline against 10 problems pulled from two public,
-widely-used benchmarks (OpenAI's HumanEval, Google's MBPP), spanning easy to
-difficult. Ground truth is not re-derived here: each dataset's own assert-style
-tests already ARE a human-verified oracle (that's the point of a benchmark),
-so this file only needs to extract them mechanically and correctly — done with
-a small ast-based parser, no eval()/exec(), same principle as test_writer.py's
-oracle and rigorous_eval.py's reference implementations.
+"""runs the pipeline on 10 problems out of HumanEval and MBPP, easy up to hard.
+these are proper benchmarks people actually use so the tests that come with them
+are already right, i dont have to work out the answers myself like in
+rigorous_eval.py. i just have to pull them out of the files properly, which i do
+with ast so nothing gets executed.
 
-Source data (unmodified, as downloaded):
+files came from:
   https://github.com/openai/human-eval/blob/master/data/HumanEval.jsonl.gz
   https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json
-Local copies: .run_logs/HumanEval.jsonl, .run_logs/sanitized-mbpp.json
+copies are saved in .run_logs/
 """
 
 import ast
@@ -22,8 +20,9 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), ".run_logs")
 
 
 def parse_asserts_from_source(src: str) -> list:
-    '''walks every `assert fn(args) == expected` in a source blob and extracts
-    (args_tuple, expected) via ast.literal_eval — no eval()/exec() anywhere.'''
+    '''goes through every `assert fn(args) == expected` line and pulls out the args
+    and the expected answer with ast.literal_eval. no eval or exec so none of the
+    test code actually runs, it just gets read'''
     tree = ast.parse(src)
     cases = []
     for node in ast.walk(tree):
@@ -59,10 +58,8 @@ def load_mbpp(task_id: int) -> dict:
     raise KeyError(task_id)
 
 
-# ---------------------------------------------------------------------------
-# 10 problems, easy -> difficult. task_prompt is written fresh (matching this
-# project's style), test_cases are parsed directly from the real dataset files.
-# ---------------------------------------------------------------------------
+# --- the 10 problems, easy -> hard. i wrote the task prompts out myself but the
+# test cases get parsed straight from the dataset files so i cant mistype them ---
 
 PROBLEMS = []
 

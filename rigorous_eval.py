@@ -1,18 +1,15 @@
-"""Runs the planner+agent pipeline against three new, hand-picked difficult
-prompts spanning different problem domains (stack evaluation, graph traversal,
-string DP) — none of them boolean-expression parsing, to check whether the
-pipeline generalizes rather than just having been tuned to one task.
+"""runs the pipeline on 3 harder tasks i picked that have nothing to do with
+boolean expressions (rpn calculator, finding cycles in a graph, edit distance).
+everything so far was only ever tested on the one task it was built around so i
+wanted to see if it actually works on anything else or if i just tuned it to that.
 
-Ground truth for every test case comes from a small trusted reference
-implementation (no eval()/exec(), same principle as test_writer.py's oracle),
-self-tested against well-known textbook answers before being trusted."""
+the expected answers come from small reference versions i wrote myself, no eval
+or exec, and i check those against answers i already know first"""
 
 from agent import run_pipeline
 
 
-# ---------------------------------------------------------------------------
-# Task 1: RPN calculator (stack-based evaluation)
-# ---------------------------------------------------------------------------
+# --- task 1, rpn calculator. stack based ---
 
 def ref_rpn(tokens: list[str]) -> int:
     stack = []
@@ -57,16 +54,14 @@ RPN_INPUTS = [
     (["42"],),
 ]
 
-RPN_KNOWN_ANSWERS = {  # textbook-verified subset, for self-testing the oracle
+RPN_KNOWN_ANSWERS = {  # ones i already know the answer to, to check my version below
     "(2 1 +) 3 *": 9,
     "leetcode_example_2": 22,
     "leetcode_example_3": 5,
 }
 
 
-# ---------------------------------------------------------------------------
-# Task 2: directed-graph cycle detection
-# ---------------------------------------------------------------------------
+# --- task 2, finding a cycle in a directed graph ---
 
 def ref_has_cycle(graph: dict[str, list[str]]) -> bool:
     WHITE, GRAY, BLACK = 0, 1, 2
@@ -112,9 +107,7 @@ CYCLE_INPUTS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Task 3: Levenshtein edit distance (string DP)
-# ---------------------------------------------------------------------------
+# --- task 3, levenshtein edit distance. dynamic programming ---
 
 def ref_edit_distance(a: str, b: str) -> int:
     n, m = len(a), len(b)

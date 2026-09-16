@@ -9,7 +9,8 @@ from pydantic_ai.providers.ollama import OllamaProvider
 from planner import run_planner, SubTask
 import test_writer
 
-# test_cases: list of (args_tuple, expected) — fn(*args) is compared against expected
+# test cases are (args, expected) now instead of the old 3 tuple, so the same
+# run_tests works for any function and not just the boolean one
 test_cases = [
     (("a", {"a": True}), True),
     (("NOT a", {"a": True}), False),
@@ -56,7 +57,7 @@ def code_executor(code: str, function_name: str):
     return namespace[function_name]
 
 def run_tests(code: str, function_name: str, test_cases):
-    '''test_cases: list of (args_tuple, expected) — fn(*args) is compared against expected'''
+    '''runs the generated function on every test case. each case is (args, expected)'''
     fn = code_executor(code,function_name)
     if fn is None:
         return False, ["Code failed to execute or function name not found"]
@@ -84,7 +85,7 @@ task = "Write a function `eval_bool_expression(expression: str, variables: dict[
 
 
 def topo_order(subtasks: list[SubTask]) -> list[SubTask]:
-    '''orders subtasks so every dependency comes before its dependents'''
+    '''puts the subtasks in order so the ones you depend on get built first'''
     by_id = {t.task_id: t for t in subtasks}
     visited = set()
     order = []
@@ -139,12 +140,14 @@ MAX_ATTEMPTS = 6
 
 
 def has_function_def(code: str, function_name: str) -> bool:
-    '''deterministic sanity check: does the code actually define this function?'''
+    '''checks the code actually has the function in it. the reviewer approved an
+    empty one once so i check this myself before wasting a review call on it'''
     return re.search(rf'^\s*def\s+{re.escape(function_name)}\s*\(', code, re.MULTILINE) is not None
 
 
 def syntax_error(code: str) -> str | None:
-    '''deterministic sanity check: does the code actually parse as Python?'''
+    '''tries to compile the code to see if its even valid python. the reviewer let
+    one through with a literal backslash n in the middle of it so now i check'''
     try:
         compile(code, "<subtask>", "exec")
         return None
@@ -199,7 +202,7 @@ def implement_subtask(task_prompt: str, subtask: SubTask, solutions: dict[str, C
 
 
 def combined_code(task_id: str, solutions: dict[str, CodeSolution], by_id: dict[str, SubTask]) -> str:
-    '''concatenates a subtask's code with all its transitive dependencies, in dependency order'''
+    '''glues a subtask's code together with everything it depends on, deps first'''
     order = []
     seen = set()
 
@@ -216,10 +219,10 @@ def combined_code(task_id: str, solutions: dict[str, CodeSolution], by_id: dict[
 
 
 def build_test_suite(task_prompt: str, hand_written: list, extra_n: int = 12) -> list:
-    '''hand-written test_cases are the trusted baseline; on top of that, ask an LLM
-    for more inputs and score them with test_writer's deterministic oracle so
-    correctness never depends on the same model grading its own homework. Falls
-    back to the hand-written set alone if generation fails for any reason.'''
+    '''adds extra test cases on top of my hand written ones. the llm only picks the
+    inputs, the oracle in test_writer works out what the answer should be, otherwise
+    the model is just marking its own homework. if the generation fails for any
+    reason just carry on with the hand written ones'''
     suite = list(hand_written)
 
     try:
@@ -244,10 +247,10 @@ def build_test_suite(task_prompt: str, hand_written: list, extra_n: int = 12) ->
 
 
 def check_full_solution(code: str, entry_function: str) -> list[str]:
-    '''holistic pass over the fully assembled solution: each subtask is checked in
-    isolation as it's built, but bugs at the seams between subtasks (mismatched
-    calls, wrong argument order, name collisions) only show up once everything
-    is combined. Returns a list of problems found; empty means it looks sound.'''
+    '''looks at the whole thing once its all stuck together. every subtask already
+    gets checked on its own but things still break where they join up, like calling
+    a function with the wrong args or two functions ending up with the same name.
+    returns a list of problems, empty list means it looks ok'''
     problems = []
 
     err = syntax_error(code)
@@ -272,16 +275,16 @@ def check_full_solution(code: str, entry_function: str) -> list[str]:
 
 
 def run_pipeline(task_prompt: str, hand_written_test_cases: list, use_test_writer: bool = True) -> dict:
-    '''drives the full planner -> implement -> assemble -> test pipeline for an
-    arbitrary task_prompt/test_cases pair. Returns a stats dict for scoring/
-    reporting; also prints progress as it goes, same as before.'''
+    '''runs the whole thing start to finish, plan -> build each subtask -> stick them
+    together -> test. works with any task prompt and test cases now. also returns a
+    dict of stats so the other scripts can score it instead of me reading the output'''
     stats = {
         "planner_ok": False,
         "subtasks_total": 0,
         "subtasks_implemented": 0,
         "terminal_ids": [],
         "terminal_implemented": [],
-        "terminal_results": {},  # tid -> {"passed": bool, "cases_passed": int, "cases_total": int, "integration_issues": [str]}
+        "terminal_results": {},  # task_id -> how many cases passed + any issues found
     }
 
     plan = run_planner(task_prompt)

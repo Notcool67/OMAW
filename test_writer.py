@@ -1,7 +1,7 @@
-"""Generates test *inputs* for the boolean-expression task with an LLM, then
-scores each one against a small deterministic reference evaluator instead of
-trusting the LLM's own idea of the expected answer — the model proposes what
-to test, never what the correct result is."""
+"""makes extra test cases for the boolean expression task. the llm only comes up
+with the inputs, then the little evaluator in here works out what the answer
+should be. if the model picked the expected answers too it could be wrong about
+the code and wrong about the test in the same way and youd never know"""
 
 import ast
 import operator
@@ -15,9 +15,9 @@ from pydantic_ai.providers.ollama import OllamaProvider
 
 
 def reference_eval(expression: str, variables: dict[str, bool]) -> bool:
-    '''ground truth for the boolean-expression task, built on ast (parsing only,
-    no eval()/exec()) restricted to a small safe grammar: and/or/not/xor,
-    parentheses, variable names, and boolean constants.'''
+    '''works out the actual answer for a boolean expression so i have something to
+    check against. uses ast to parse it only, no eval or exec since the task says
+    not to, and it only allows and/or/not/xor, brackets, variables and True/False'''
     py_expr = re.sub(r'\bXOR\b', ' ^ ', expression)
     py_expr = re.sub(r'\bAND\b', ' and ', py_expr)
     py_expr = re.sub(r'\bOR\b', ' or ', py_expr)
@@ -57,8 +57,8 @@ def reference_eval(expression: str, variables: dict[str, bool]) -> bool:
 
 
 def self_test_oracle(test_cases):
-    '''sanity-check the oracle itself against a set of known-correct test_cases
-    before trusting it to judge anything the model produces.'''
+    '''checks the evaluator above on cases i already know the answers to, before
+    trusting it to mark anything the model gives me. it did have a bug'''
     results = []
     for expression, variables, expected in test_cases:
         try:
@@ -129,10 +129,9 @@ if __name__ == "__main__":
     for r in self_test_oracle(test_cases):
         print(r)
 
-    # llama3.2:latest was tried first (different family from the coder/reviewer's
-    # Qwen models) but only got 4/12 valid cases under the oracle, ignoring the
-    # AND/OR/NOT/XOR vocabulary in favor of &&/||/!. granite3.1-dense:8b scored
-    # 12/12 with good operator and nesting coverage — using that instead.
+    # tried llama3.2:latest first because its a different family to the qwen ones,
+    # but it only got 4/12 valid, kept writing && and || instead of AND and OR.
+    # granite3.1-dense:8b is much better at sticking to the right operators
     print("\n--- granite3.1-dense:8b test-writer run ---")
     scored, valid, total = evaluate_test_writer(task, "granite3.1-dense:8b")
 
