@@ -49,10 +49,11 @@ general reasoning model, and the test-case generator is from a different family 
 that produced it tends to share the same blind spots. This is also why the test generator isn't
 allowed to decide expected answers.
 
-**`output_type=NativeOutput(...)` rather than the PydanticAI default.** This makes the model fill
-in a pydantic schema directly using its own structured-output support. It's the reason every model
-in the pipeline has to report the `tools` capability in Ollama. I found that out the
-hard way, see the debugging notes below.
+**`output_type=NativeOutput(...)` rather than the default.** This uses the model's native
+structured-output path, which on self-hosted Ollama means llama.cpp's grammar-constrained decoder,
+so the JSON comes back already matching the schema instead of being parsed and retried afterwards.
+Worth knowing it's a different mechanism from tool calling, which is what the default `ToolOutput`
+uses. I assumed those were the same thing for a while and was wrong about it, see below.
 
 **Cheap deterministic checks run before the reviewer.** Whether code contains
 `def function_name(` is a regex question, and whether it parses is a `compile()` question. Neither
@@ -172,29 +173,52 @@ called on it once.
 The broader point is that the reviewer is genuinely useful for questions like "is this algorithm
 right", and genuinely unreliable for questions the interpreter can answer for free.
 
-### `NativeOutput` silently depends on the model's tool-calling support
+### A correlation I mistook for a cause
+
+Worth writing this one up properly because I got it wrong and only caught it later.
 
 The parser subtask kept failing on `qwen2.5-coder:7b`, so I tried `deepseek-coder:6.7b` to see
 whether it was a model-specific weakness or a task-difficulty ceiling. The result was much worse:
-it produced stub function bodies on essentially every attempt, far below what the model it
-replaced was managing.
+stub function bodies on essentially every attempt, well below what the model it replaced managed.
 
-The obvious conclusion was that deepseek-coder is simply worse at this. That didn't sit right,
-since it's a well-regarded code model, so I checked what Ollama reported about it:
+The obvious conclusion was that deepseek-coder is just worse at this. That didn't sit right for a
+well-regarded code model, so I checked what Ollama reported about it:
 
 ```bash
 curl -s localhost:11434/api/show -d '{"name":"deepseek-coder:6.7b"}'
 # capabilities: ['completion']
 ```
 
-No `tools`. The Qwen models report `['completion', 'tools', ...]`. `NativeOutput` relies on
-structured output support, so on a model without it the schema-filling degrades badly and you get
-malformed, half-empty `CodeSolution` objects. It was never a fair comparison of coding ability at
-all. The harness was broken for that model.
+No `tools`, where the Qwen models report `['completion', 'tools', ...]`. That looked like the
+answer: `NativeOutput` needs structured output support, deepseek doesn't advertise it, so the
+harness must be broken for that model rather than the model being bad. I reverted to Qwen and
+wrote that down as the explanation.
 
-I reverted and moved up to `qwen2.5-coder:14b` instead. The real takeaway is that model choice for
-this pipeline is constrained by the `tools` capability first and code quality second, and that's
-now the first thing I check before trying any new model.
+It's wrong. Before repeating it publicly I actually tested it, with the same trivial schema against
+both models:
+
+```
+deepseek-coder:6.7b  (capabilities: ['completion'])
+  -> no exception, valid CodeSolution, correct working function
+
+qwen2.5-coder:7b     (capabilities: ['completion', 'tools', 'insert'])
+  -> no exception, valid CodeSolution, correct working function
+```
+
+`NativeOutput` works fine without `tools`. The two are separate mechanisms: tool calling is what
+the default `ToolOutput` uses, while `NativeOutput` goes through JSON-schema structured output,
+which self-hosted Ollama enforces with llama.cpp's grammar-constrained decoder regardless of what
+`capabilities` says. I had a correlation of one and turned it into a mechanism.
+
+So why deepseek did badly on the real task, I genuinely don't know. It wasn't a capability gap.
+The useful lesson isn't about Ollama at all: an explanation that fits the evidence isn't the same
+as an explanation you've tested, and I nearly published the difference.
+
+One real thing did come out of that test. Qwen wrapped its output in ```` ```python ```` fences
+despite the field description saying not to, and deepseek didn't. Fenced code fails `compile()` on
+line 1, and 17 of the 37 syntax-guard rejections across my runs were exactly that error. I haven't
+confirmed fences caused them, because the guard logs the error and not the offending code, which
+is something I'd fix before claiming it.
 
 ### The coder kept writing a parser for the wrong language
 
